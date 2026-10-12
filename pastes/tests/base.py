@@ -26,7 +26,16 @@ class PasteTestBase(TestCase):
         return Paste.objects.create(**defaults)
 
     def post_create(self, content="hello pastebin", **extra):
-        """向创建接口提交表单，返回响应。"""
+        """向创建接口提交表单，返回响应。
+
+        extra 中的 REMOTE_ADDR / HTTP_X_FORWARDED_FOR 作为请求 META 传递，
+        其余作为表单字段。
+        """
         data = {"content": content, "expiry": "1d"}
+        meta = {}
+        for key in ("REMOTE_ADDR", "HTTP_X_FORWARDED_FOR"):
+            if key in extra:
+                meta[key] = extra.pop(key)
         data.update(extra)
-        return self.client.post("/", data, REMOTE_ADDR="127.0.0.1")
+        meta.setdefault("REMOTE_ADDR", "127.0.0.1")
+        return self.client.post("/", data, **meta)
