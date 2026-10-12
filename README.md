@@ -24,7 +24,7 @@
 | 框架 | Django 6.1（服务端渲染，Django Templates） |
 | 数据库 | SQLite（唯一数据库，文件持久化） |
 | 前端 | 原生 HTML + CSS + 约 50 行 JavaScript（仅用于复制链接） |
-| 生产部署 | Gunicorn（WSGI）+ Nginx（反向代理与静态文件） |
+| 生产部署 | 方式一：Docker（Gunicorn + WhiteNoise，单容器）；方式二：Gunicorn（WSGI）+ Nginx |
 
 不使用 DRF、React/Vue、Redis 等非必要依赖；不要求注册登录即可创建与阅读。
 
@@ -109,7 +109,98 @@ python manage.py runserver
 python manage.py test
 ```
 
-测试使用独立的文件型 SQLite 测试库（`.temp/test-db.sqlite3`，运行后自动销毁），不会触碰真实数据库；无需设置任何环境变量。当前共 102 个测试，覆盖创建与输入验证、密码、有效期与读取次数、频率限制、IP 封禁、Web 安全（XSS 转义 / CSRF / 请求体上限 / 安全响应头）、Admin 后台与多线程并发行为。
+测试使用独立的文件型 SQLite 测试库（`.temp/test-db.sqlite3`，运行后自动销毁），不会触碰真实数据库；无需设置任何环境变量。当前共 110 个测试，覆盖创建与输入验证、密码、有效期与读取次数、频率限制、IP 封禁、Web 安全（XSS 转义 / CSRF / 请求体上限 / 安全响应头）、配置加载（`.env`/环境变量双通道）、Admin 后台与多线程并发行为。
+
+## 两种部署方式
+
+项目支持两条部署路径，功能与安全行为完全一致：
+
+| | 方式一：Docker | 方式二：直接部署 |
+|---|---|---|
+| 配置注入 | `docker run -e` / `--env-file`（环境变量） | systemd `EnvironmentFile` 或项目根 `.env` 文件 |
+| 静态文件 | 镜像内置（WhiteNoise 服务，预压缩） | Nginx 直接服务 `staticfiles/` |
+| 数据库迁移 | 容器启动时自动执行 | 手动执行 `manage.py migrate` |
+| 数据持久化 | `/data` 卷挂载 | 本地文件路径（`PASTE_DB_PATH`） |
+
+**配置双通道**均为同一套语义：真实环境变量优先生效；项目根目录 `.env` 文件（或 `PASTE_ENV_FILE` 指定的路径）补充未设置的项。Docker 推荐用 `--env-file .env` 传入（Docker 会将其全部注入为环境变量）。
+
+## 方式一：Docker 部署
+
+### 获取镜像
+
+推送 `main` 分支或 `v*` 标签后，GitHub Actions 自动构建多架构镜像（amd64/arm64）并发布到 GHCR：
+`ghcr.io/coronazero/pastebin`（标签：`latest`、`vX.Y.Z`、`vX.Y`、Git 短 SHA）。
+
+首次发布后包默认为 private，可在 GitHub → Packages 中改为 public。
+
+```bash
+docker pull ghcr.io/coronazero/pastebin:latest
+```
+
+### 环境变量（`.env`，与直接部署共用同一份文件）
+
+```ini
+PASTE_SECRET_KEY=<必填，python -c "import secrets; print(secrets.token_urlsafe(64))">
+PASTE_ALLOWED_HOSTS=paste.example.com
+PASTE_PROXY_HOPS=1
+PASTE_SECURE_SSL_REDIRECT=true
+PASTE_SECURE_COOKIES=true
+PASTE_PROXY_SSL_HEADER=true
+```
+
+### 启动容器
+
+```bash
+docker run -d --name pastebin \
+  --env-file .env \
+  -p 127.0.0.1:8000:8000 \
+  -v ./pastebin-data:/data \
+  ghcr.io/coronazero/pastebin:latest
+```
+
+要点：
+- **`/data` 卷**：SQLite 数据库（`/data/db.sqlite3`，可用 `PASTE_DB_PATH` 覆盖）落在持久化卷；容器以非 root 用户（uid 1000）运行，请确保挂载目录对 uid 1000 可写（`chown -R 1000:1000 ./pastebin-data`），或改用 Docker 具名卷自动继承权限；
+- **启动即迁移**：entrypoint 每次启动幂等执行 `manage.py migrate`，升级镜像无需手工操作；
+- **健康检查**：内置 `HEALTHCHECK` 访问 `/healthz`（验证 HTTP 栈与数据库读路径）；
+- **单容器可达静态文件**：镜像构建时已 `collectstatic` 并预压缩（gzip），由 WhiteNoise 服务，无需 Nginx；生产建议仍前置 Nginx/Caddy 终止 TLS 并注入 `X-Forwarded-For`（`PASTE_PROXY_HOPS=1`）；
+- **调整 gunicorn**：`-e GUNICORN_CMD_ARGS="--workers 4 --threads 4"`（gunicorn 原生支持）；
+- **端口仅绑本机**（`127.0.0.1:8000`）由前置代理对外，避免绕过代理直连。
+
+### Docker Compose 示例
+
+```yaml
+services:
+  pastebin:
+    image: ghcr.io/coronazero/pastebin:latest
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8000:8000"
+    env_file: .env
+    volumes:
+      - ./pastebin-data:/data
+```
+
+### 容器内执行管理命令
+
+镜像 entrypoint 支持替换主进程，直接跑管理命令：
+
+```bash
+# 定时清理（建议宿主 crontab 每小时执行）
+docker run --rm --env-file .env -v ./pastebin-data:/data ghcr.io/coronazero/pastebin:latest python manage.py cleanup_pastes
+
+# 或对运行中容器
+# docker exec pastebin python manage.py cleanup_pastes
+
+# 创建运营者账号（交互式）
+docker run --rm -it --env-file .env -v ./pastebin-data:/data ghcr.io/coronazero/pastebin:latest python manage.py createsuperuser
+```
+
+### 镜像构建说明
+
+- 基础镜像 `python:3.12-slim`：Debian slim 底座 + 官方 CPython 3.12（与开发/测试环境一致）。刻意不用 `debian:latest`（无 Python、版本漂移、需 apt 装解释器）与 `python:3.12-alpine`（musl libc 与生产验证环境不一致）；
+- 多阶段构建：最终镜像仅含 venv、应用代码与预压缩静态文件；
+- 运行用户非 root（uid 1000）；
+- 工作流同时运行完整测试套件，测试失败不发布镜像。
 
 ## 运营后台（Django Admin）
 
@@ -126,7 +217,7 @@ python manage.py test
 
 **修改创建频率限制的方法**：后台 → 站点配置 → 修改“单网络每小时创建上限” → 保存。按 IP 网络统计（IPv4 单地址、IPv6 /64 前缀），自然 UTC 小时切换自动重置；被拒绝的尝试同样计数。
 
-## 生产环境部署
+## 方式二：直接部署（systemd + Nginx）
 
 以下示例假设部署目录为 `/opt/pastebin`，服务用户 `paste`，域名 `paste.example.com`。与本地开发一致使用项目内虚拟环境 `.venv`。
 
@@ -144,6 +235,8 @@ python manage.py migrate
 python manage.py collectstatic --noinput
 python manage.py createsuperuser   # 可选
 ```
+
+直接部署时 `.env` 放在项目根目录（或用 `PASTE_ENV_FILE` 指定路径）即可生效，无需额外加载动作；systemd 部署也可改用其 `EnvironmentFile` 指向同一文件，两者等价。
 
 ### 2. 生产配置说明（`.env`）
 
@@ -335,24 +428,31 @@ sqlite3 /opt/pastebin/db.sqlite3 ".backup /backup/pastebin-$(date +%F).sqlite3"
 ```
 pastebin/
 ├── manage.py                     # 管理入口
-├── requirements.txt              # 运行依赖
-├── .env.example                  # 环境变量示例
+├── requirements.txt              # 运行依赖（含 WhiteNoise）
+├── .env.example                  # 环境变量示例（两种部署方式共用）
+├── Dockerfile                    # 多阶段构建（python:3.12-slim，非 root）
+├── .dockerignore
+├── .gitattributes                # shell 脚本强制 LF（防容器内 CRLF 崩溃）
+├── .github/
+│   └── workflows/docker.yml      # CI：测试 → 构建多架构镜像 → 发布 GHCR
+├── docker/
+│   └── entrypoint.sh             # 容器入口：数据目录准备 + 自动迁移
 ├── config/                       # Django 项目配置
-│   ├── settings.py               # 环境变量驱动的全部安全边界
-│   ├── middleware.py             # 请求体大小预检 + 统一安全响应头
+│   ├── settings.py               # 环境变量 / .env 双通道配置加载
+│   ├── middleware.py             # 请求体大小预检 + 统一安全响应头（静态资源缓存例外）
 │   ├── urls.py / wsgi.py
 ├── pastes/                       # 业务应用
 │   ├── models.py                 # Paste / SiteConfig / IpBan / HourCounter
 │   ├── services.py               # IP 信任边界 / 网络键规范化 / 原子配额
 │   ├── forms.py                  # 创建与密码表单验证
-│   ├── views.py                  # 视图（创建 / 阅读 / 密码验证 / robots）
+│   ├── views.py                  # 视图（创建 / 阅读 / 密码验证 / robots / healthz）
 │   ├── admin.py                  # 运营后台
 │   ├── urls.py
 │   ├── management/commands/cleanup_pastes.py
 │   ├── migrations/               # Django 迁移（勿手工修改数据库）
 │   ├── templates/pastes/         # 页面模板（自动转义，纯文本展示）
 │   ├── static/pastes/            # CSS 与复制链接 JS
-│   └── tests/                    # 102 个自动化测试
+│   └── tests/                    # 110 个自动化测试
 └── templates/                    # 400/403/404/500 错误页
 ```
 
