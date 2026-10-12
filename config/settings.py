@@ -1,9 +1,15 @@
 """
 Django 全局配置。
 
+配置双通道（优先级从高到低）：
+1. 真实环境变量 —— Docker（docker run -e / --env-file / compose）与 systemd
+   EnvironmentFile 注入的标准方式；
+2. `.env` 配置文件（项目根目录，或 PASTE_ENV_FILE 指定的路径）—— 面向直接部署，
+   未通过环境变量提供的项才会从文件读取，文件中同样支持 `KEY=VALUE` 行与 # 注释。
+
 设计约定：
 - 部署级安全边界（SECRET_KEY / DEBUG / ALLOWED_HOSTS / 可信代理跳数）必须通过
-  环境变量提供，不能放进 Admin 后台，否则会形成"用后台改后台安全边界"的循环依赖。
+  环境变量或 .env 文件提供，不能放进 Admin 后台，否则会形成“用后台改后台安全边界”的循环依赖。
 - 运营者日常可调参数（创建频率限额、密码尝试限额、计数保留时长、密码长度上限、
   IP 封禁规则）存放在数据库中，通过 Django Admin 后台修改，即时生效。
 """
@@ -15,6 +21,38 @@ from pathlib import Path
 from django.core.exceptions import ImproperlyConfigured
 
 BASE_DIR = Path(__file__).resolve().parent.parent
+
+
+def _load_env_file() -> None:
+    """从 .env 文件加载配置项到环境变量（不覆盖已存在的值）。
+
+    仅支持最基础的 `KEY=VALUE` 格式：每行一条，# 开头为注释，忽略空行；
+    值可用成对的单引号或双引号包裹（包裹时去除引号）。刻意不实现变量展开、
+    多行等高级语法，避免引入 python-dotenv 依赖与解析歧义。
+
+    查找路径：环境变量 PASTE_ENV_FILE 指定的文件；否则项目根目录的 .env。
+    文件不存在时静默跳过（本地开发可不提供）。
+    """
+    path = os.environ.get("PASTE_ENV_FILE") or str(BASE_DIR / ".env")
+    try:
+        with open(path, encoding="utf-8") as handle:
+            lines = handle.readlines()
+    except OSError:
+        return  # 不存在或不可读：保持纯环境变量行为
+    for raw in lines:
+        line = raw.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        key = key.strip()
+        value = value.strip()
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in ("'", '"'):
+            value = value[1:-1]
+        if key and key not in os.environ:
+            os.environ[key] = value
+
+
+_load_env_file()
 
 
 def _env_str(name: str, default: str | None = None) -> str | None:
@@ -85,6 +123,9 @@ INSTALLED_APPS = [
 
 MIDDLEWARE = [
     "django.middleware.security.SecurityMiddleware",
+    # WhiteNoise：让应用自身也能服务静态文件（单容器/无 Nginx 部署时 Admin 资源可用；
+    # 若前置 Nginx 服务静态文件，则由 Nginx 优先处理，互不冲突）
+    "whitenoise.middleware.WhiteNoiseMiddleware",
     # 请求体大小预检：在最早期拒绝超大请求，避免后续中间件读入内存
     "config.middleware.RequestBodySizeMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
@@ -218,7 +259,17 @@ PASSWORD_HASHERS = [
 # ---------------------------------------------------------------------------
 
 STATIC_URL = "static/"
-STATIC_ROOT = BASE_DIR / "staticfiles"  # collectstatic 输出目录（生产由 Nginx 直接服务）
+STATIC_ROOT = BASE_DIR / "staticfiles"  # collectstatic 输出目录
+
+# 静态文件收集时生成 gzip/br 预压缩副本，配合 WhiteNoise 直接服务（无需 Nginx）
+STORAGES = {
+    "default": {
+        "BACKEND": "django.core.files.storage.FileSystemStorage",
+    },
+    "staticfiles": {
+        "BACKEND": "whitenoise.storage.CompressedStaticFilesStorage",
+    },
+}
 
 # ---------------------------------------------------------------------------
 # 国际化与语言（界面为中文）

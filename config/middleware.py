@@ -69,7 +69,8 @@ class RequestBodySizeMiddleware:
 class SecurityHeadersMiddleware:
     """为所有响应统一设置安全响应头。
 
-    - Cache-Control: no-store          —— 禁止任何缓存保存页面（含正文与错误页）
+    - Cache-Control: no-store          —— 页面（含正文与错误页）禁止任何缓存保存；
+                                          静态资源例外，保留 WhiteNoise 的长缓存头
     - X-Content-Type-Options: nosniff —— 禁止浏览器嗅探 MIME 类型
     - Referrer-Policy: no-referrer    —— 不向外站泄露来源
     - X-Robots-Tag                    —— 劝阻搜索引擎索引/摘要（不保证所有爬虫遵守）
@@ -94,7 +95,10 @@ class SecurityHeadersMiddleware:
     def __call__(self, request):
         response = self.get_response(request)
         headers = response.headers
-        headers["Cache-Control"] = "no-store"
+        # 静态资源（WhiteNoise / Nginx 服务）保留其长缓存头；
+        # 页面响应一律 no-store（含正文与错误页）
+        if not request.path.startswith(settings.STATIC_URL):
+            headers["Cache-Control"] = "no-store"
         headers["X-Content-Type-Options"] = "nosniff"
         headers["Referrer-Policy"] = "no-referrer"
         headers["X-Robots-Tag"] = "noindex, nofollow, noarchive, nosnippet"

@@ -1,6 +1,8 @@
 # 运行时依赖（虚拟环境内安装：pip install -r requirements.txt）
 # Python >= 3.12
 Django==6.1.2
+# 静态文件服务：单容器/无 Nginx 部署时由应用直接服务 Admin 静态资源
+whitenoise==6.11.0
 
-# 生产环境额外组件（Windows 无法安装 Gunicorn，故不写入此清单）：
+# 生产环境额外组件（Windows 无法安装 Gunicorn，故不写入此清单，Dockerfile / Linux 服务器单独安装）：
 #   pip install gunicorn
