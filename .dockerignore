@@ -1,0 +1,17 @@
+# 版本控制与 CI 元数据：镜像内不需要
+.git
+.gitattributes
+.github
+.dockerignore
+
+# 本地运行产物与机密（.env 绝不进入镜像层）
+.env
+.venv
+db.sqlite3
+*.sqlite3
+*.sqlite3-journal
+staticfiles/
+.temp/
+__pycache__/
+**/__pycache__/
+*.py[cod]

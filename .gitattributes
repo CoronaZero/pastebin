@@ -1,0 +1,5 @@
+# 仓库换行符规范
+# shell 脚本必须保持 LF：容器内 /bin/sh 无法解释 CRLF（\r）行尾
+*.sh text eol=lf
+# 其余文本文件按平台默认处理
+* text=auto
