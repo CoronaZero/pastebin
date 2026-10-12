@@ -199,3 +199,12 @@ def robots(request):
     该声明仅对遵守 robots 协议的爬虫有效，不能保证所有爬虫都不抓取。
     """
     return HttpResponse("User-agent: *\nDisallow: /\n", content_type="text/plain; charset=utf-8")
+
+
+def healthz(request):
+    """健康检查端点：验证 HTTP 栈与数据库读路径（仅 GET，无敏感信息）。
+
+    供容器 HEALTHCHECK 与负载均衡探针使用；异常时由 Django 转为 5xx。
+    """
+    SiteConfig.objects.exists()  # 任何数据库读失败都会抛异常 → 非 200
+    return HttpResponse("ok\n", content_type="text/plain; charset=utf-8")

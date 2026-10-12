@@ -10,4 +10,5 @@ urlpatterns = [
     path("created/<uuid:paste_id>/", views.created, name="created"),
     path("p/<uuid:paste_id>/", views.view, name="view"),
     path("robots.txt", views.robots, name="robots"),
+    path("healthz", views.healthz, name="healthz"),
 ]
