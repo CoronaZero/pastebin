@@ -1,0 +1,214 @@
+"""
+Django 全局配置。
+
+设计约定：
+- 部署级安全边界（SECRET_KEY / DEBUG / ALLOWED_HOSTS / 可信代理跳数）必须通过
+  环境变量提供，不能放进 Admin 后台，否则会形成"用后台改后台安全边界"的循环依赖。
+- 运营者日常可调参数（创建频率限额、密码尝试限额、计数保留时长、密码长度上限、
+  IP 封禁规则）存放在数据库中，通过 Django Admin 后台修改，即时生效。
+"""
+import os
+import secrets
+from pathlib import Path
+
+from django.core.exceptions import ImproperlyConfigured
+
+BASE_DIR = Path(__file__).resolve().parent.parent
+
+
+def _env_str(name: str, default: str | None = None) -> str | None:
+    """读取环境变量，空白值视为未设置。"""
+    value = os.environ.get(name)
+    if value is None or value.strip() == "":
+        return default
+    return value
+
+
+def _env_bool(name: str, default: bool = False) -> bool:
+    value = _env_str(name)
+    if value is None:
+        return default
+    return value.strip().lower() in ("1", "true", "yes", "on")
+
+
+def _env_int(name: str, default: int) -> int:
+    value = _env_str(name)
+    if value is None:
+        return default
+    try:
+        return int(value)
+    except ValueError as exc:
+        raise ImproperlyConfigured(f"环境变量 {name} 必须是整数，当前值: {value!r}") from exc
+
+
+# ---------------------------------------------------------------------------
+# 核心安全边界
+# ---------------------------------------------------------------------------
+
+DEBUG = _env_bool("PASTE_DEBUG", default=False)
+
+SECRET_KEY = _env_str("PASTE_SECRET_KEY")
+if not SECRET_KEY:
+    if DEBUG:
+        # 开发模式：每次启动随机生成，本服务不依赖跨重启的会话/CSRF 状态，可接受。
+        SECRET_KEY = secrets.token_urlsafe(64)
+    else:
+        raise ImproperlyConfigured(
+            "生产环境必须通过环境变量 PASTE_SECRET_KEY 提供随机密钥，"
+            "生成方式: python -c \"import secrets; print(secrets.token_urlsafe(64))\""
+        )
+
+ALLOWED_HOSTS = [
+    host.strip() for host in (_env_str("PASTE_ALLOWED_HOSTS", "") or "").split(",") if host.strip()
+]
+if DEBUG:
+    ALLOWED_HOSTS += ["localhost", "127.0.0.1", "[::1]"]
+
+# ---------------------------------------------------------------------------
+# 应用定义
+# ---------------------------------------------------------------------------
+
+INSTALLED_APPS = [
+    "django.contrib.admin",
+    "django.contrib.auth",
+    "django.contrib.contenttypes",
+    "django.contrib.sessions",
+    "django.contrib.messages",
+    "django.contrib.staticfiles",
+    "pastes",
+]
+
+MIDDLEWARE = [
+    "django.middleware.security.SecurityMiddleware",
+    # 请求体大小预检：在最早期拒绝超大请求，避免后续中间件读入内存
+    "config.middleware.RequestBodySizeMiddleware",
+    "django.contrib.sessions.middleware.SessionMiddleware",
+    "django.middleware.common.CommonMiddleware",
+    "django.middleware.csrf.CsrfViewMiddleware",
+    "django.contrib.auth.middleware.AuthenticationMiddleware",
+    "django.contrib.messages.middleware.MessageMiddleware",
+    # 统一设置安全响应头（Cache-Control / nosniff / CSP / X-Robots-Tag 等）
+    "config.middleware.SecurityHeadersMiddleware",
+    # X-Frame-Options: DENY 由 Django 内置中间件负责
+    "django.middleware.clickjacking.XFrameOptionsMiddleware",
+]
+
+ROOT_URLCONF = "config.urls"
+
+TEMPLATES = [
+    {
+        "BACKEND": "django.template.backends.django.DjangoTemplates",
+        "DIRS": [BASE_DIR / "templates"],  # 放置 400/403/404/500 等错误页覆盖模板
+        "APP_DIRS": True,
+        "OPTIONS": {
+            "context_processors": [
+                "django.template.context_processors.debug",
+                "django.template.context_processors.request",
+                "django.contrib.auth.context_processors.auth",
+                "django.contrib.messages.context_processors.messages",
+            ],
+        },
+    },
+]
+
+WSGI_APPLICATION = "config.wsgi.application"
+
+# ---------------------------------------------------------------------------
+# 数据库（SQLite，唯一数据库）
+# ---------------------------------------------------------------------------
+
+# 测试专用数据库固定使用文件型 SQLite（放在 .temp/ 下），
+# 而不是默认的内存库：内存库无法暴露真实文件库的写锁排队与并发行为，
+# 并发正确性必须在与生产一致的存储引擎上验证。
+TEST_DB_DIR = BASE_DIR / ".temp"
+os.makedirs(TEST_DB_DIR, exist_ok=True)
+
+DATABASES = {
+    "default": {
+        "ENGINE": "django.db.backends.sqlite3",
+        "NAME": _env_str("PASTE_DB_PATH", str(BASE_DIR / "db.sqlite3")),
+        "OPTIONS": {
+            # BEGIN IMMEDIATE：事务一开始即获取写锁，
+            # 避免多个连接"先读后写"时锁升级造成 database is locked 死锁
+            "transaction_mode": "IMMEDIATE",
+            # SQLite busy 超时（秒）：并发写请求在此时间内排队等待，而不是立刻失败
+            "timeout": 20,
+        },
+        "TEST": {
+            "NAME": str(TEST_DB_DIR / "test-db.sqlite3"),
+        },
+    }
+}
+
+# ---------------------------------------------------------------------------
+# 时间：全部使用 UTC
+# ---------------------------------------------------------------------------
+
+TIME_ZONE = "UTC"
+USE_TZ = True
+
+# ---------------------------------------------------------------------------
+# 输入大小限制
+# ---------------------------------------------------------------------------
+
+# 应用层请求体上限（原始字节）。
+# 背景：256 KiB 的 UTF-8 文本经 URL 编码提交时体积最多膨胀约 3 倍（约 0.75 MiB），
+# 4 MiB 可覆盖最坏情况并留足余量；配合 Nginx client_max_body_size 使用。
+PASTE_MAX_REQUEST_BODY_BYTES = 4 * 1024 * 1024
+DATA_UPLOAD_MAX_MEMORY_SIZE = PASTE_MAX_REQUEST_BODY_BYTES
+
+# ---------------------------------------------------------------------------
+# 客户端 IP 信任边界
+# ---------------------------------------------------------------------------
+
+# 0 = 不信任任何 X-Forwarded-For；N = 经 N 层可信代理时取 XFF 从右数第 N 个地址
+PASTE_PROXY_HOPS = _env_int("PASTE_PROXY_HOPS", default=0)
+
+# ---------------------------------------------------------------------------
+# HTTPS 与 Cookie 安全（生产建议开启）
+# ---------------------------------------------------------------------------
+
+SECURE_SSL_REDIRECT = _env_bool("PASTE_SECURE_SSL_REDIRECT", default=False)
+PASTE_SECURE_COOKIES = _env_bool("PASTE_SECURE_COOKIES", default=False)
+SESSION_COOKIE_SECURE = PASTE_SECURE_COOKIES
+CSRF_COOKIE_SECURE = PASTE_SECURE_COOKIES
+SECURE_HSTS_SECONDS = 31536000 if PASTE_SECURE_COOKIES else 0
+SECURE_HSTS_INCLUDE_SUBDOMAINS = True
+SECURE_HSTS_PRELOAD = False
+
+# TLS 由前置 Nginx 终止，Django 不感知 HTTPS 时保持此配置为空；
+# 若 Django 直接面向 HTTPS 流量，取消注释并按需启用：
+# SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
+
+# ---------------------------------------------------------------------------
+# 密码哈希：使用 Django 内置 PBKDF2-SHA256（无需第三方依赖）
+# ---------------------------------------------------------------------------
+
+PASSWORD_HASHERS = [
+    "django.contrib.auth.hashers.PBKDF2PasswordHasher",
+]
+
+# ---------------------------------------------------------------------------
+# 静态文件
+# ---------------------------------------------------------------------------
+
+STATIC_URL = "static/"
+STATIC_ROOT = BASE_DIR / "staticfiles"  # collectstatic 输出目录（生产由 Nginx 直接服务）
+
+# ---------------------------------------------------------------------------
+# 国际化与语言（界面为中文）
+# ---------------------------------------------------------------------------
+
+LANGUAGE_CODE = "zh-hans"
+
+# ---------------------------------------------------------------------------
+# 默认主键
+# ---------------------------------------------------------------------------
+
+DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
+
+# ---------------------------------------------------------------------------
+# 响应头：禁止浏览器嗅探与被嵌入（X-Frame-Options 由内置中间件设置）
+# ---------------------------------------------------------------------------
+
+X_FRAME_OPTIONS = "DENY"
