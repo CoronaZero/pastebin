@@ -1,0 +1,6 @@
+# 运行时依赖（虚拟环境内安装：pip install -r requirements.txt）
+# Python >= 3.12
+Django==6.1.2
+
+# 生产环境额外组件（Windows 无法安装 Gunicorn，故不写入此清单）：
+#   pip install gunicorn
