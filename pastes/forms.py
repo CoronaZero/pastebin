@@ -88,9 +88,11 @@ class PasteCreateForm(forms.Form):
 
     def __init__(self, *args, config: SiteConfig | None = None, **kwargs):
         super().__init__(*args, **kwargs)
-        # 密码长度上限由站点配置驱动（Admin 后台可调）
-        config = config or SiteConfig.load()
-        self.fields["password"].max_length = config.password_max_length
+        # 密码长度上限由站点配置驱动（Admin 后台可调）。
+        # 注意：不能事后修改字段的 max_length 属性（Django 的长度校验器在字段构造时
+        # 注册，事后改属性不会生效），故在 clean_password 中按配置验证。
+        self.config = config or SiteConfig.load()
+        self.fields["password"].widget.attrs["maxlength"] = str(self.config.password_max_length)
 
     def clean_content(self) -> str:
         content: str = self.cleaned_data.get("content", "")
@@ -106,6 +108,8 @@ class PasteCreateForm(forms.Form):
 
     def clean_password(self) -> str:
         password: str = self.cleaned_data.get("password", "")
+        if len(password) > self.config.password_max_length:
+            raise ValidationError(f"密码过长，最多 {self.config.password_max_length} 个字符。")
         if password:
             _check_utf8_encodable(password, "密码")
         return password
@@ -129,10 +133,12 @@ class PastePasswordForm(forms.Form):
 
     def __init__(self, *args, config: SiteConfig | None = None, **kwargs):
         super().__init__(*args, **kwargs)
-        config = config or SiteConfig.load()
-        self.fields["password"].max_length = config.password_max_length
+        self.config = config or SiteConfig.load()
+        self.fields["password"].widget.attrs["maxlength"] = str(self.config.password_max_length)
 
     def clean_password(self) -> str:
         password: str = self.cleaned_data.get("password", "")
+        if len(password) > self.config.password_max_length:
+            raise ValidationError(f"密码过长，最多 {self.config.password_max_length} 个字符。")
         _check_utf8_encodable(password, "密码")
         return password
