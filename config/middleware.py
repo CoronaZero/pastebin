@@ -12,21 +12,24 @@
 - 任何中间件与视图都不记录密码、正文或密码哈希到日志。
 """
 from django.conf import settings
-from django.http import HttpResponse
+from django.shortcuts import render
 
-# 极简错误页模板（骨架阶段模板尚未就绪；模板提交后统一切换为 render 渲染 status.html）
-_ERROR_PAGE = """<!DOCTYPE html>
-<html lang="zh-Hans">
-<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>{title} - Pastebin</title></head>
-<body style="font-family: system-ui, sans-serif; margin: 2rem auto; max-width: 32rem; padding: 0 1rem;">
-<h1>{title}</h1><p>{message}</p><p><a href="/">返回首页</a></p></body></html>"""
+# 状态码 → (标题, 说明)；与 pastes 视图的状态页共用同一模板
+_BODY_LIMIT_PAGES = {
+    400: ("请求无效", "请求头格式非法。"),
+    413: ("请求体过大", "请求体超出服务器允许的大小上限，或使用了不受支持的传输方式。"),
+}
 
 
-def _plain_error(status: int, title: str, message: str) -> HttpResponse:
-    """返回不依赖模板引擎的极简错误页，避免错误页本身再引入故障点。"""
-    html = _ERROR_PAGE.format(title=title, message=message)
-    return HttpResponse(html, status=status, content_type="text/html; charset=utf-8")
+def _plain_error(request, status: int):
+    """渲染统一状态页。"""
+    title, message = _BODY_LIMIT_PAGES[status]
+    return render(
+        request,
+        "pastes/status.html",
+        {"title": title, "message": message},
+        status=status,
+    )
 
 
 class RequestBodySizeMiddleware:
@@ -50,16 +53,16 @@ class RequestBodySizeMiddleware:
                 # 无 Content-Length：若有任何分块传输声明则直接拒绝
                 transfer_encoding = (request.META.get("HTTP_TRANSFER_ENCODING") or "").lower()
                 if "chunked" in transfer_encoding:
-                    return _plain_error(413, "请求被拒绝", "请使用标准表单方式提交。")
+                    return _plain_error(request, 413)
             else:
                 try:
                     length = int(raw_length)
                 except (TypeError, ValueError):
-                    return _plain_error(400, "请求无效", "请求头格式非法。")
+                    return _plain_error(request, 400)
                 if length < 0:
-                    return _plain_error(400, "请求无效", "请求头格式非法。")
+                    return _plain_error(request, 400)
                 if length > settings.PASTE_MAX_REQUEST_BODY_BYTES:
-                    return _plain_error(413, "请求体过大", "请求体超出服务器允许的大小上限。")
+                    return _plain_error(request, 413)
         return self.get_response(request)
 
 

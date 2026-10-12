@@ -1,0 +1,9 @@
+{% extends "pastes/base.html" %}
+{% block title %}请求无效 - Pastebin{% endblock %}
+{% block content %}
+<section class="card narrow">
+  <h1>请求无效</h1>
+  <p>请求格式不正确，已被拒绝。</p>
+  <div class="actions"><a class="primary" href="{% url 'pastes:index' %}">返回首页</a></div>
+</section>
+{% endblock %}

@@ -1,0 +1,9 @@
+{% extends "pastes/base.html" %}
+{% block title %}服务暂时不可用 - Pastebin{% endblock %}
+{% block content %}
+<section class="card narrow">
+  <h1>服务暂时不可用</h1>
+  <p>服务器处理请求时发生内部错误，请稍后重试。</p>
+  <div class="actions"><a class="primary" href="{% url 'pastes:index' %}">返回首页</a></div>
+</section>
+{% endblock %}

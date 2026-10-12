@@ -1,0 +1,21 @@
+{% extends "pastes/base.html" %}
+
+{% block title %}阅读文本 - Pastebin{% endblock %}
+
+{% block content %}
+<section class="card">
+  <div class="view-meta">
+    <span>有效期至：{{ paste.expires_at|date:"Y-m-d H:i:s T" }}（UTC）</span>
+    {% if paste.max_reads is not None %}
+      <span>读取次数上限：{{ paste.max_reads }}（已成功读取 {{ paste.read_count }} 次）</span>
+    {% endif %}
+  </div>
+
+  {# Django 模板自动转义：正文中的 HTML、脚本一律按纯文本显示，不会被解释执行 #}
+  <pre class="content" tabindex="0">{{ paste.content }}</pre>
+
+  <div class="actions">
+    <a href="{% url 'pastes:index' %}">创建新文本</a>
+  </div>
+</section>
+{% endblock %}

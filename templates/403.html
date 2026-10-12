@@ -1,0 +1,9 @@
+{% extends "pastes/base.html" %}
+{% block title %}访问被拒绝 - Pastebin{% endblock %}
+{% block content %}
+<section class="card narrow">
+  <h1>访问被拒绝</h1>
+  <p>当前请求被拒绝（如 CSRF 校验失败或网络被封禁）。</p>
+  <div class="actions"><a class="primary" href="{% url 'pastes:index' %}">返回首页</a></div>
+</section>
+{% endblock %}

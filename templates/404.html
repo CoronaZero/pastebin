@@ -1,0 +1,9 @@
+{% extends "pastes/base.html" %}
+{% block title %}页面不存在 - Pastebin{% endblock %}
+{% block content %}
+<section class="card narrow">
+  <h1>页面不存在</h1>
+  <p>该链接无效，或文本从未存在。</p>
+  <div class="actions"><a class="primary" href="{% url 'pastes:index' %}">返回首页</a></div>
+</section>
+{% endblock %}

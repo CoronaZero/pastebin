@@ -1,0 +1,24 @@
+{% load static %}
+<!DOCTYPE html>
+<html lang="zh-Hans">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex, nofollow, noarchive, nosnippet">
+  <title>{% block title %}Pastebin - 临时文本分享{% endblock %}</title>
+  <link rel="stylesheet" href="{% static 'pastes/style.css' %}">
+</head>
+<body>
+  <header class="site-header">
+    <a class="brand" href="{% url 'pastes:index' %}">Pastebin</a>
+    <span class="tagline">临时纯文本分享</span>
+  </header>
+  <main class="container">
+    {% block content %}{% endblock %}
+  </main>
+  <footer class="site-footer">
+    <p>内容按“原样”提供：到达有效期或读取次数上限后自动不可访问。</p>
+    <p><a href="{% url 'pastes:index' %}">创建新文本</a></p>
+  </footer>
+</body>
+</html>

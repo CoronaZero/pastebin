@@ -1,0 +1,13 @@
+{% extends "pastes/base.html" %}
+
+{% block title %}{{ title }} - Pastebin{% endblock %}
+
+{% block content %}
+<section class="card narrow">
+  <h1>{{ title }}</h1>
+  <p>{{ message }}</p>
+  <div class="actions">
+    <a class="primary" href="{% url 'pastes:index' %}">返回首页</a>
+  </div>
+</section>
+{% endblock %}

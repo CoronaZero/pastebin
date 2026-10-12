@@ -1,0 +1,29 @@
+{% extends "pastes/base.html" %}
+{% load static %}
+
+{% block title %}创建成功 - Pastebin{% endblock %}
+
+{% block content %}
+<section class="card">
+  <h1>创建成功</h1>
+  <p>你的文本已保存。分享链接：</p>
+
+  <div class="share-row">
+    <label for="share-url" class="visually-hidden">分享链接</label>
+    <input id="share-url" type="text" value="{{ share_url }}" readonly aria-readonly="true">
+    <button id="copy-btn" type="button" class="primary" data-success-text="已复制">复制链接</button>
+  </div>
+  <p id="copy-status" class="field-help" role="status" aria-live="polite"></p>
+
+  <div class="notice">
+    <p>请现在保存该链接：出于隐私考虑，服务端不保存“谁创建了哪个文本”，一旦丢失无法找回。</p>
+    <p>该链接不会展示正文或密码；知道链接的人即可阅读（未设密码时）。</p>
+  </div>
+
+  <div class="actions">
+    <a href="{% url 'pastes:view' paste_id %}">打开阅读页</a>
+    <a href="{% url 'pastes:index' %}">创建新文本</a>
+  </div>
+</section>
+<script src="{% static 'pastes/copy.js' %}" defer></script>
+{% endblock %}

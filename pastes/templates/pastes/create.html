@@ -1,0 +1,58 @@
+{% extends "pastes/base.html" %}
+
+{% block title %}创建文本 - Pastebin{% endblock %}
+
+{% block content %}
+<section class="card">
+  <h1>创建临时文本</h1>
+  <p class="hint">文本最大 {{ max_bytes|filesizeformat }}（按 UTF-8 编码字节数计），无需注册。</p>
+
+  {% if form.non_field_errors %}
+    <div class="errors-box" role="alert">{{ form.non_field_errors }}</div>
+  {% endif %}
+
+  <form method="post" action="{% url 'pastes:index' %}" novalidate>
+    {% csrf_token %}
+
+    <div class="field">
+      <label for="{{ form.content.id_for_label }}">{{ form.content.label }}</label>
+      {{ form.content }}
+      <p id="content-help" class="field-help">支持任意 Unicode 文本，保留原始换行与空格。</p>
+      {% if form.content.errors %}
+        <div class="errors" role="alert">{{ form.content.errors }}</div>
+      {% endif %}
+    </div>
+
+    <div class="field-row">
+      <div class="field">
+        <label for="{{ form.password.id_for_label }}">{{ form.password.label }}</label>
+        {{ form.password }}
+        {% if form.password.errors %}
+          <div class="errors" role="alert">{{ form.password.errors }}</div>
+        {% endif %}
+      </div>
+      <div class="field">
+        <label for="{{ form.max_reads.id_for_label }}">{{ form.max_reads.label }}</label>
+        {{ form.max_reads }}
+        <p class="field-help">每次成功读取（含刷新）都会计数，达到上限后失效。</p>
+        {% if form.max_reads.errors %}
+          <div class="errors" role="alert">{{ form.max_reads.errors }}</div>
+        {% endif %}
+      </div>
+    </div>
+
+    <div class="field">
+      <label for="{{ form.expiry.id_for_label }}">{{ form.expiry.label }}</label>
+      {{ form.expiry }}
+      {% if form.expiry.errors %}
+        <div class="errors" role="alert">{{ form.expiry.errors }}</div>
+      {% endif %}
+    </div>
+
+    <div class="actions">
+      <button type="submit" class="primary">创建分享链接</button>
+      <button type="reset">清空</button>
+    </div>
+  </form>
+</section>
+{% endblock %}
