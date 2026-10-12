@@ -9,6 +9,7 @@ Django 全局配置。
 """
 import os
 import secrets
+import sys
 from pathlib import Path
 
 from django.core.exceptions import ImproperlyConfigured
@@ -47,9 +48,14 @@ def _env_int(name: str, default: int) -> int:
 
 DEBUG = _env_bool("PASTE_DEBUG", default=False)
 
+# 测试模式（manage.py test）：自动生成随机密钥，免设环境变量。
+# 测试无需跨进程稳定的 SECRET_KEY（无会话/CSRF 跨重启状态），
+# 而生产环境仍强制要求显式提供 PASTE_SECRET_KEY。
+_RUNNING_TESTS = len(sys.argv) > 1 and sys.argv[1] == "test"
+
 SECRET_KEY = _env_str("PASTE_SECRET_KEY")
 if not SECRET_KEY:
-    if DEBUG:
+    if DEBUG or _RUNNING_TESTS:
         # 开发模式：每次启动随机生成，本服务不依赖跨重启的会话/CSRF 状态，可接受。
         SECRET_KEY = secrets.token_urlsafe(64)
     else:
@@ -57,7 +63,6 @@ if not SECRET_KEY:
             "生产环境必须通过环境变量 PASTE_SECRET_KEY 提供随机密钥，"
             "生成方式: python -c \"import secrets; print(secrets.token_urlsafe(64))\""
         )
-
 ALLOWED_HOSTS = [
     host.strip() for host in (_env_str("PASTE_ALLOWED_HOSTS", "") or "").split(",") if host.strip()
 ]
@@ -176,9 +181,29 @@ SECURE_HSTS_SECONDS = 31536000 if PASTE_SECURE_COOKIES else 0
 SECURE_HSTS_INCLUDE_SUBDOMAINS = True
 SECURE_HSTS_PRELOAD = False
 
-# TLS 由前置 Nginx 终止，Django 不感知 HTTPS 时保持此配置为空；
-# 若 Django 直接面向 HTTPS 流量，取消注释并按需启用：
-# SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
+# TLS 由前置 Nginx 终止时，需信任其传递的 X-Forwarded-Proto 以识别 HTTPS。
+# 置为 true 时启用 SECURE_PROXY_SSL_HEADER（配合 PASTE_SECURE_SSL_REDIRECT 与 HSTS）。
+if _env_bool("PASTE_PROXY_SSL_HEADER", default=False):
+    SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
+
+# ---------------------------------------------------------------------------
+# 日志：统一输出到 stderr，由 Gunicorn 捕获；不记录密码、正文或哈希
+# ---------------------------------------------------------------------------
+
+LOGGING = {
+    "version": 1,
+    "disable_existing_loggers": False,
+    "formatters": {
+        "simple": {"format": "{asctime} {levelname} {name} {message}", "style": "{"},
+    },
+    "handlers": {
+        "console": {
+            "class": "logging.StreamHandler",
+            "formatter": "simple",
+        },
+    },
+    "root": {"handlers": ["console"], "level": "INFO"},
+}
 
 # ---------------------------------------------------------------------------
 # 密码哈希：使用 Django 内置 PBKDF2-SHA256（无需第三方依赖）
