@@ -95,9 +95,11 @@ class SecurityHeadersMiddleware:
     def __call__(self, request):
         response = self.get_response(request)
         headers = response.headers
-        # 静态资源（WhiteNoise / Nginx 服务）保留其长缓存头；
-        # 页面响应一律 no-store（含正文与错误页）
-        if not request.path.startswith(settings.STATIC_URL):
+        # 静态资源（WhiteNoise / Nginx 服务）保留其自身缓存策略；
+        # 页面响应一律 no-store（含正文与错误页）。
+        # 注意补前导斜杠：request.path 形如 /static/...，而 STATIC_URL 默认无斜杠。
+        static_prefix = "/" + settings.STATIC_URL.lstrip("/")
+        if not request.path.startswith(static_prefix):
             headers["Cache-Control"] = "no-store"
         headers["X-Content-Type-Options"] = "nosniff"
         headers["Referrer-Policy"] = "no-referrer"
